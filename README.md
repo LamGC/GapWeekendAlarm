@@ -2,6 +2,8 @@
 
 基于 Cloudflare Pages + Worker 的匿名 WebPush 提醒 PWA，支持大小周 / 双休 / 单休三种排班规则，在指定时刻推送周末 / 调休 / 工作日提醒。推送载荷仅含 `type` 字段，不采集任何个人信息。
 
+**[立即使用 →](https://gap-weekend-alarm.pages.dev/)**
+
 ## 项目架构
 
 ```
