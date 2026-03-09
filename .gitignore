@@ -1,0 +1,12 @@
+node_modules
+dist
+.wrangler
+.DS_Store
+*.log
+apps/web/dist
+apps/worker/.wrangler
+apps/worker/.dev.vars
+apps/web/.env*.local
+apps/web/.env.production
+playwright-report
+test-results

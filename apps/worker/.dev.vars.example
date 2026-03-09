@@ -1,0 +1,16 @@
+# Copy this file to .dev.vars for local development.
+# Values here override [vars] in wrangler.toml during `wrangler dev`.
+# Never commit .dev.vars — it is gitignored.
+
+# Production secret: set via `wrangler secret put TURNSTILE_SECRET` for deployment.
+TURNSTILE_SECRET=
+
+# Enable Turnstile bypass for local dev (no real Turnstile site key needed).
+ALLOW_INSECURE_TURNSTILE_BYPASS=true
+
+# VAPID key pair + subject for Web Push. Generate keys with: npx web-push generate-vapid-keys
+# Production: VAPID_PUBLIC_KEY goes to [vars] in wrangler.toml;
+#             VAPID_PRIVATE_KEY and VAPID_SUBJECT via `wrangler secret put`.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:you@example.com

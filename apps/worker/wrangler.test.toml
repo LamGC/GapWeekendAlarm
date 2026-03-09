@@ -1,0 +1,16 @@
+name = "gap-weekend-alarm-worker"
+main = "src/index.ts"
+compatibility_date = "2026-03-05"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gap-weekend-alarm-db"
+database_id = "394fea86-a108-417f-bf82-bceeb56ed5c1"
+
+[vars]
+ALLOW_INSECURE_TURNSTILE_BYPASS = "true"
+PUSH_MODE = "simulate"
+VAPID_PUBLIC_KEY = "BDjUZmaluWRK6U36hyXv-RTc4jsAyRh1pJq1ZTQOh2gs6uDqPKFAP1_DiME0dVaDZYa465JnOMqzjuEHDSTfLC0"
+# VAPID_SUBJECT is a secret — set in .dev.vars locally, `wrangler secret put VAPID_SUBJECT` in production

@@ -1,0 +1,28 @@
+{
+  "name": "gap-weekend-alarm",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "apps/worker"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:worker": "npm run dev --workspace apps/worker",
+    "build:web": "npm run build --workspace apps/web",
+    "build:worker": "npm run build --workspace apps/worker",
+    "deploy:web": "npx wrangler pages deploy apps/web/dist --project-name gap-weekend-alarm",
+    "deploy:worker": "npm run deploy --workspace apps/worker",
+    "lint:web": "npm run lint --workspace apps/web",
+    "lint:worker": "npm run lint --workspace apps/worker",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:web": "playwright test --config apps/web/playwright.config.ts",
+    "test:e2e:joint": "playwright test --config playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "playwright": "^1.58.2"
+  }
+}
