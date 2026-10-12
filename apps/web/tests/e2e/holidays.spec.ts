@@ -14,7 +14,7 @@ async function setup(page: Page, status = 'available', source = 'CN_MAINLAND') {
   await page.route('**/api/v1/**', (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/v1/holiday-sources') return route.fulfill({ json: { sources: [{ source_code: 'CN_MAINLAND', source_name: '中国内地', region: 'CN', enabled: 1, priority: 100 }] } });
-    if (url.pathname === '/api/v1/holidays') return route.fulfill({ json: { source_code: 'CN_MAINLAND', region: 'CN', year: Number(url.searchParams.get('year')), status, synced_at: '2026-09-30T02:00:00Z', source_url: 'https://github.com/NateScarlet/holiday-cn', days: status === 'unavailable' ? [] : days } });
+    if (url.pathname === '/api/v1/holidays') return route.fulfill({ json: { source_code: 'CN_MAINLAND', region: 'CN', year: Number(url.searchParams.get('year')), status, synced_at: '2026-09-30T02:00:00Z', source_url: 'https://github.com/NateScarlet/holiday-cn', days: status === 'unavailable' || Number(url.searchParams.get('year')) !== 2026 ? [] : days } });
     return route.fulfill({ json: {} });
   });
   await page.goto('/');
@@ -116,7 +116,7 @@ test('late holiday response cannot re-enable holidays after disabling', async ({
   const pending = new Promise<void>((resolve) => { release = resolve; });
   await page.route('**/api/v1/holidays?**', async (route) => {
     await pending;
-    return route.fulfill({ json: { source_code: 'CN_MAINLAND', region: 'CN', year: Number(new URL(route.request().url()).searchParams.get('year')), status: 'available', synced_at: null, source_url: '', days } });
+    return route.fulfill({ json: { source_code: 'CN_MAINLAND', region: 'CN', year: Number(new URL(route.request().url()).searchParams.get('year')), status: 'available', synced_at: '2026-09-30T02:00:00Z', source_url: 'https://github.com/NateScarlet/holiday-cn', days: Number(new URL(route.request().url()).searchParams.get('year')) === 2026 ? days : [] } });
   });
   await choose(page, '中国内地');
   await choose(page, '关闭（仅按排班）');
@@ -146,7 +146,7 @@ test('old successful snapshots are stale and settings show verified attribution'
   await setup(page);
   await page.route('**/api/v1/holidays?**', (route) => route.fulfill({ json: {
     source_code: 'CN_MAINLAND', region: 'CN', year: Number(new URL(route.request().url()).searchParams.get('year')),
-    status: 'available', synced_at: '2026-09-01T02:00:00Z', source_url: 'https://github.com/NateScarlet/holiday-cn', days,
+    status: 'available', synced_at: '2026-09-01T02:00:00Z', source_url: 'https://github.com/NateScarlet/holiday-cn', days: Number(new URL(route.request().url()).searchParams.get('year')) === 2026 ? days : [],
   } }));
   await page.reload();
   await expect(page.getByTestId('holiday-coverage')).toContainText('旧数据，待更新');

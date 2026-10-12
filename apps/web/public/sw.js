@@ -1,3 +1,9 @@
+// Replaced only in dist by scripts/build-sw.mjs. Dev keeps push support without caching.
+const PRECACHE = /* __GWA_PRECACHE__ */ null;
+const SHELL_PREFIX = 'gwa-shell-v1-';
+const SHELL_CACHE = PRECACHE ? `${SHELL_PREFIX}${PRECACHE.version}` : null;
+const SHELL_PATHS = new Set(PRECACHE?.urls ?? []);
+
 const CONFIG_CACHE = 'gwa-config-v1';
 const CONFIG_PATH = '__gwa_notification_config__';
 
@@ -47,11 +53,66 @@ const OFFICIAL_NOTIFICATION_PACKS = {
 };
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(self.skipWaiting());
+  if (PRECACHE) event.waitUntil(installShell());
+  // Do not skipWaiting: an update must not replace a shell with unsaved local edits.
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    // Only our versioned shell caches: notification configuration and other apps survive.
+    if (SHELL_CACHE) {
+      const names = await caches.keys();
+      await Promise.all(names.filter((name) => name.startsWith(SHELL_PREFIX) && name !== SHELL_CACHE)
+        .map((name) => caches.delete(name)));
+    }
+    await self.clients.claim();
+  })());
+});
+
+async function installShell() {
+  try {
+    // Fetch every asset before writing. Never leave a partially installed shell behind.
+    const entries = await Promise.all(PRECACHE.urls.map(async (path) => {
+      const request = new Request(new URL(path, self.location.origin), { cache: 'reload', credentials: 'omit' });
+      const response = await fetch(request);
+      if (response.status !== 200 || response.type !== 'basic' || response.redirected) {
+        throw new Error(`precache_failed:${path}`);
+      }
+      // Drain each body immediately. Chromium limits concurrent install fetches;
+      // waiting for all response headers before consuming bodies can deadlock that queue.
+      const body = await response.arrayBuffer();
+      const buffered = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+      // Fetch has already decoded the body; avoid carrying transport encodings/lengths.
+      buffered.headers.delete('content-encoding');
+      buffered.headers.delete('content-length');
+      return [request, buffered];
+    }));
+    const cache = await caches.open(SHELL_CACHE);
+    await Promise.all(entries.map(([request, response]) => cache.put(request, response)));
+  } catch (error) {
+    await caches.delete(SHELL_CACHE);
+    throw error;
+  }
+}
+
+function isSensitivePath(pathname) {
+  return /^\/(?:api|auth|oauth|subscriptions?|turnstile|cdn-cgi)(?:\/|$)/i.test(pathname)
+    || pathname.startsWith('/__gwa_');
+}
+
+self.addEventListener('fetch', (event) => {
+  if (!SHELL_CACHE || event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin || isSensitivePath(url.pathname)) return;
+  // Serve a single installed version consistently. No runtime response is ever cached.
+  // Navigation query strings are deliberately not used as cache keys.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(caches.open(SHELL_CACHE).then(async (cache) =>
+      (await cache.match('/index.html')) ?? fetch(event.request)));
+  } else if (!url.search && SHELL_PATHS.has(url.pathname)) {
+    event.respondWith(caches.open(SHELL_CACHE).then(async (cache) =>
+      (await cache.match(url.pathname)) ?? fetch(event.request)));
+  }
 });
 
 self.addEventListener('message', (event) => {

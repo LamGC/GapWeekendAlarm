@@ -6,6 +6,18 @@ import type {
   LocalTemplate,
 } from '../types';
 
+export function readLocalValue(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+export function writeLocalValue(key: string, value: string): boolean {
+  try { localStorage.setItem(key, value); return true; }
+  catch {
+    window.dispatchEvent(new Event('gwa:local-storage-error'));
+    return false;
+  }
+}
+
 const PREFS_KEY = 'gwa:prefs';
 const AUTH_KEY = 'gwa:auth';
 const TEMPLATES_KEY = 'gwa:templates';
@@ -45,7 +57,7 @@ function makeDefaultScheduleConfig(): LocalScheduleConfig {
 }
 
 export function loadPreferences(): LocalPreferences {
-  const raw = localStorage.getItem(PREFS_KEY);
+  const raw = readLocalValue(PREFS_KEY);
   if (!raw) return defaultPrefs;
   try {
     return { ...defaultPrefs, ...(JSON.parse(raw) as Partial<LocalPreferences>) };
@@ -55,11 +67,11 @@ export function loadPreferences(): LocalPreferences {
 }
 
 export function savePreferences(value: LocalPreferences): void {
-  localStorage.setItem(PREFS_KEY, JSON.stringify(value));
+  writeLocalValue(PREFS_KEY, JSON.stringify(value));
 }
 
 export function loadAuthState(): AuthState {
-  const raw = localStorage.getItem(AUTH_KEY);
+  const raw = readLocalValue(AUTH_KEY);
   if (!raw) {
     return { clientId: crypto.randomUUID(), deviceToken: '' };
   }
@@ -75,12 +87,12 @@ export function loadAuthState(): AuthState {
 }
 
 export function saveAuthState(value: AuthState): void {
-  localStorage.setItem(AUTH_KEY, JSON.stringify(value));
+  writeLocalValue(AUTH_KEY, JSON.stringify(value));
 }
 
 export function loadScheduleConfig(): LocalScheduleConfig {
   const defaults = makeDefaultScheduleConfig();
-  const raw = localStorage.getItem(SCHEDULE_KEY);
+  const raw = readLocalValue(SCHEDULE_KEY);
   if (!raw) return defaults;
 
   try {
@@ -101,11 +113,11 @@ export function loadScheduleConfig(): LocalScheduleConfig {
 }
 
 export function saveScheduleConfig(value: LocalScheduleConfig): void {
-  localStorage.setItem(SCHEDULE_KEY, JSON.stringify(value));
+  if (!writeLocalValue(SCHEDULE_KEY, JSON.stringify(value))) throw new Error('local_storage_unavailable');
 }
 
 export function loadTemplates(): LocalTemplate[] {
-  const raw = localStorage.getItem(TEMPLATES_KEY);
+  const raw = readLocalValue(TEMPLATES_KEY);
   if (!raw) return defaultTemplates;
   try {
     const parsed = JSON.parse(raw) as LocalTemplate[];
@@ -117,11 +129,11 @@ export function loadTemplates(): LocalTemplate[] {
 }
 
 export function saveTemplates(value: LocalTemplate[]): void {
-  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(value));
+  writeLocalValue(TEMPLATES_KEY, JSON.stringify(value));
 }
 
 export function loadLocalePacks(): LocalLocalePack[] {
-  const raw = localStorage.getItem(PACKS_KEY);
+  const raw = readLocalValue(PACKS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as LocalLocalePack[];
@@ -132,5 +144,5 @@ export function loadLocalePacks(): LocalLocalePack[] {
 }
 
 export function saveLocalePacks(value: LocalLocalePack[]): void {
-  localStorage.setItem(PACKS_KEY, JSON.stringify(value));
+  writeLocalValue(PACKS_KEY, JSON.stringify(value));
 }
