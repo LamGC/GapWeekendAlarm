@@ -150,6 +150,7 @@ test('blocked local storage keeps the shell usable and explains session-only set
 test('foreground timer and reconnect revalidate cached holidays without losing last-good data', async ({ page, context }) => {
   let requests = 0;
   let name = '首次缓存';
+  await page.clock.install();
   await page.addInitScript(() => {
     localStorage.setItem('gwa:schedule', JSON.stringify({ enabledHolidaySources: ['CN_MAINLAND'] }));
   });
@@ -166,7 +167,6 @@ test('foreground timer and reconnect revalidate cached holidays without losing l
     .filter(([key]) => key.startsWith('gap-weekend:holidays:')).map(([, value]) => value).join(''));
   await expect.poll(cachedText).toContain('首次缓存');
   const initialRequests = requests;
-  await page.clock.install();
   name = '定时刷新';
   await page.clock.fastForward(30 * 60 * 1000);
   await expect.poll(() => requests).toBeGreaterThan(initialRequests);
@@ -182,6 +182,7 @@ test('foreground timer and reconnect revalidate cached holidays without losing l
 
 test('failed first install cannot leave notification registration busy forever', async ({ page, context }) => {
   await context.grantPermissions(['notifications']);
+  await page.clock.install();
   let subscriptionPosts = 0;
   page.on('request', (request) => {
     if (request.method() === 'POST' && request.url().includes('/api/v1/subscriptions')) subscriptionPosts += 1;
@@ -194,7 +195,6 @@ test('failed first install cannot leave notification registration busy forever',
   const button = page.getByRole('button', { name: '开启通知', exact: true });
   await expect(button).toBeEnabled();
   const before = await page.evaluate(() => localStorage.getItem('gwa:schedule'));
-  await page.clock.install();
   await button.click();
   await expect(button).toBeDisabled();
   await page.clock.fastForward(16_000);
