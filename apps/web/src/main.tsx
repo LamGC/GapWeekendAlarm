@@ -11,7 +11,8 @@ createRoot(document.getElementById('root')!).render(
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+    // Never force activation or reload: installed updates take over after old tabs close.
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch((err) => {
       console.warn('service_worker_register_failed', err);
     });
   });

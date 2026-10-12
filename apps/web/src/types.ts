@@ -14,6 +14,7 @@ export interface LocalPreferences {
 }
 
 export interface LocalScheduleConfig {
+  pendingCloudSync?: boolean;
   timezone: string;
   enabledHolidaySources: string[];
   weekendRemindTime: string;

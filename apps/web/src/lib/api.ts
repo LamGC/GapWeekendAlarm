@@ -1,6 +1,6 @@
 import type { ExtensionRecord, ExtensionScope, ScheduleRule } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8787';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8787';
 
 type JsonValue = Record<string, unknown>;
 
@@ -152,9 +152,9 @@ export async function getSubscription(deviceToken: string): Promise<Subscription
   return res.item;
 }
 
-export async function listHolidaySources(): Promise<HolidaySource[]> {
+export async function listHolidaySources(signal?: AbortSignal): Promise<HolidaySource[]> {
   const res = await request<{ sources: HolidaySource[] }>('/api/v1/holiday-sources', {
-    method: 'GET',
+    method: 'GET', signal,
   });
   return res.sources;
 }
@@ -183,6 +183,6 @@ export interface HolidayYear {
   days: HolidayDay[];
 }
 
-export async function getHolidayYear(source: string, year: number): Promise<HolidayYear> {
-  return request(`/api/v1/holidays?source=${encodeURIComponent(source)}&year=${year}`);
+export async function getHolidayYear(source: string, year: number, signal?: AbortSignal): Promise<HolidayYear> {
+  return request(`/api/v1/holidays?source=${encodeURIComponent(source)}&year=${year}`, { signal });
 }

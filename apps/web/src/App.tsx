@@ -46,6 +46,8 @@ import {
   savePreferences,
   saveScheduleConfig,
   saveTemplates,
+  readLocalValue,
+  writeLocalValue,
 } from './lib/localState';
 import { useHolidays } from './lib/useHolidays';
 import type { HolidayDay } from './lib/api';
@@ -92,7 +94,7 @@ interface TimeZoneGroup {
 interface ToastMessage {
   id: number;
   text: string;
-  type: 'success' | 'error';
+  type: 'success' | 'error' | 'warning';
 }
 
 declare global {
@@ -139,11 +141,32 @@ function App() {
 
   const [cloudDisabled, setCloudDisabled] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [hasOfflineChanges, setHasOfflineChanges] = useState(initialSchedule.pendingCloudSync === true);
+  const [scheduleStorageWarning, setScheduleStorageWarning] = useState<string | null>(null);
+  const offlineChangesRef = useRef(hasOfflineChanges);
+  const lastScheduleKeyRef = useRef<string | null>(null);
+  const clearOfflineChanges = () => {
+    offlineChangesRef.current = false;
+    setHasOfflineChanges(false);
+  };
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine);
+    const storageError = () => setScheduleStorageWarning('本地存储不可用或空间不足：设置与会话信息可能仅在本次页面有效，关闭前请恢复存储并确认保存。');
+    window.addEventListener('gwa:local-storage-error', storageError);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('gwa:local-storage-error', storageError);
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
 
   const COUNTDOWN_UNITS = ['days', 'hours', 'seconds'] as const;
   type CountdownUnit = (typeof COUNTDOWN_UNITS)[number];
   const [countdownUnit, setCountdownUnit] = useState<CountdownUnit>(() => {
-    const saved = localStorage.getItem('gwa:countdownUnit');
+    const saved = readLocalValue('gwa:countdownUnit');
     return (COUNTDOWN_UNITS as readonly string[]).includes(saved ?? '') ? (saved as CountdownUnit) : 'days';
   });
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -259,7 +282,7 @@ function App() {
     setCountdownUnit((u) => {
       const idx = COUNTDOWN_UNITS.indexOf(u);
       const next = COUNTDOWN_UNITS[(idx + 1) % COUNTDOWN_UNITS.length];
-      localStorage.setItem('gwa:countdownUnit', next);
+      writeLocalValue('gwa:countdownUnit', next);
       return next;
     });
   }
@@ -269,7 +292,7 @@ function App() {
   const notificationEnabled =
     notificationOnline && notificationPermission === 'granted' && (weekendEnabled || workdayEnabled);
 
-  const pushMessage = (text: string, type: 'success' | 'error') => {
+  const pushMessage = (text: string, type: 'success' | 'error' | 'warning') => {
     toastSeqRef.current += 1;
     setMessage({
       id: toastSeqRef.current,
@@ -310,8 +333,8 @@ function App() {
     const nextCurrentWeekType = currentWeekType === 'big' ? 'small' : 'big';
     setAnchorWeekType(nextAnchorWeekType);
 
-    if (!auth.deviceToken) {
-      pushMessage(`已切换为本周${weekTypeName(nextCurrentWeekType)}（本地生效）`, 'success');
+    if (!auth.deviceToken || !isOnline) {
+      pushMessage(`已切换为本周${weekTypeName(nextCurrentWeekType)}（本地生效）${auth.deviceToken ? '，联网后请手动同步通知配置' : ''}`, 'success');
       return;
     }
 
@@ -337,7 +360,7 @@ function App() {
   };
 
   useEffect(() => {
-    saveScheduleConfig({
+    const config = {
       timezone,
       weekendRemindTime: weekendTime,
       workdayRemindTime: workdayTime,
@@ -347,8 +370,22 @@ function App() {
       weekendEnabled,
       workdayEnabled,
       enabledHolidaySources: holidaySource ? [holidaySource] : [],
-    });
-  }, [holidaySource, anchorDate, anchorWeekType, scheduleRule, timezone, weekendEnabled, weekendTime, workdayEnabled, workdayTime]);
+    };
+    const key = JSON.stringify(config);
+    const changed = lastScheduleKeyRef.current !== null && lastScheduleKeyRef.current !== key;
+    lastScheduleKeyRef.current = key;
+    if (changed && !navigator.onLine && auth.deviceToken) {
+      offlineChangesRef.current = true;
+      setHasOfflineChanges(true);
+    }
+    try {
+      // Persist the settings and pending flag in one write, so reload cannot lose the warning.
+      saveScheduleConfig({ ...config, pendingCloudSync: offlineChangesRef.current });
+      setScheduleStorageWarning(null);
+    } catch {
+      setScheduleStorageWarning('本地存储不可用或空间不足：当前设置仅在本次页面有效，关闭前请恢复存储并确认保存。');
+    }
+  }, [auth.deviceToken, hasOfflineChanges, holidaySource, anchorDate, anchorWeekType, scheduleRule, timezone, weekendEnabled, weekendTime, workdayEnabled, workdayTime]);
 
   useEffect(() => {
     if (typeof Notification === 'undefined') {
@@ -381,6 +418,8 @@ function App() {
           return;
         }
         setCloudDisabled(false);
+        // Do not replace offline edits with older cloud settings on a later online reload.
+        if (offlineChangesRef.current) return;
         setTimezone(item.timezone);
         setWeekendTime(item.weekend_remind_time);
         setWorkdayTime(item.workday_remind_time);
@@ -443,7 +482,7 @@ function App() {
   }, [message]);
 
   useEffect(() => {
-    if (!needsTurnstile) {
+    if (!needsTurnstile || !isOnline) {
       setTurnstileToken('');
       setTurnstileError(null);
       if (window.turnstile && turnstileWidgetIdRef.current !== null && typeof window.turnstile.remove === 'function') {
@@ -509,7 +548,7 @@ function App() {
       }
       turnstileWidgetIdRef.current = null;
     };
-  }, [isLocalDevHost, needsTurnstile, prefs.locale, resolvedMode, turnstileSiteKey]);
+  }, [isLocalDevHost, isOnline, needsTurnstile, prefs.locale, resolvedMode, turnstileSiteKey]);
 
   const onReEnable = () => {
     setCloudDisabled(false);
@@ -519,11 +558,16 @@ function App() {
   };
 
   const onRegister = async () => {
+    if (!navigator.onLine) {
+      pushMessage('当前离线：此操作需要联网，尚未提交到服务端。', 'warning');
+      return;
+    }
     if (!turnstileToken) {
       pushMessage('请先完成人机验证', 'error');
       return;
     }
 
+    const submittedScheduleKey = lastScheduleKeyRef.current;
     setBusy(true);
     try {
       if (typeof Notification === 'undefined') {
@@ -566,6 +610,7 @@ function App() {
       const nextAuth = { clientId: newClientId, deviceToken: response.device_token };
       setAuth(nextAuth);
       saveAuthState(nextAuth);
+      if (submittedScheduleKey === lastScheduleKeyRef.current) clearOfflineChanges();
       pushMessage('通知开启成功', 'success');
     } catch (err) {
       pushMessage(`开启失败: ${(err as Error).message}`, 'error');
@@ -579,10 +624,15 @@ function App() {
   };
 
   const onUpdate = async () => {
+    if (!navigator.onLine) {
+      pushMessage('当前离线：此操作需要联网，尚未提交到服务端。', 'warning');
+      return;
+    }
     if (!auth.deviceToken) {
       pushMessage('请先开启通知', 'error');
       return;
     }
+    const submittedScheduleKey = lastScheduleKeyRef.current;
     setBusy(true);
     try {
       await updateSubscription(auth.deviceToken, {
@@ -596,6 +646,7 @@ function App() {
         workdayEnabled,
         enabledHolidaySources: holidaySource ? [holidaySource] : [],
       });
+      if (submittedScheduleKey === lastScheduleKeyRef.current) clearOfflineChanges();
       pushMessage('通知配置已同步', 'success');
     } catch (err) {
       pushMessage(`同步失败: ${(err as Error).message}`, 'error');
@@ -605,6 +656,10 @@ function App() {
   };
 
   const onUnregister = async () => {
+    if (!navigator.onLine) {
+      pushMessage('当前离线：此操作需要联网，尚未提交到服务端。', 'warning');
+      return;
+    }
     if (!auth.deviceToken) return;
     setBusy(true);
     try {
@@ -618,6 +673,7 @@ function App() {
       setAuth(nextAuth);
       saveAuthState(nextAuth);
       setExtensions([]);
+      clearOfflineChanges();
       pushMessage('通知已关闭，已切回本地模式', 'success');
     } catch (err) {
       pushMessage(`关闭失败: ${(err as Error).message}`, 'error');
@@ -627,6 +683,10 @@ function App() {
   };
 
   const onLoadExtensions = async () => {
+    if (!navigator.onLine) {
+      pushMessage('当前离线：此操作需要联网，尚未提交到服务端。', 'warning');
+      return;
+    }
     if (!auth.deviceToken) {
       pushMessage('请先开启通知', 'error');
       return;
@@ -640,6 +700,10 @@ function App() {
   };
 
   const onCreateExtension = async () => {
+    if (!navigator.onLine) {
+      pushMessage('当前离线：此操作需要联网，尚未提交到服务端。', 'warning');
+      return;
+    }
     if (!auth.deviceToken) {
       pushMessage('请先开启通知', 'error');
       return;
@@ -668,6 +732,10 @@ function App() {
   };
 
   const onDeleteExtension = async (id: string) => {
+    if (!navigator.onLine) {
+      pushMessage('当前离线：此操作需要联网，尚未提交到服务端。', 'warning');
+      return;
+    }
     if (!auth.deviceToken) return;
     try {
       await removeExtension(auth.deviceToken, id);
@@ -750,12 +818,23 @@ function App() {
           <Tab label="延长" />
         </Tabs>
 
+        {!isOnline && <Alert severity="info" sx={{ mt: 2 }} data-testid="offline-status">
+          当前离线：日历、倒计时和本地设置仍可使用；假期采用已缓存数据，未缓存年份按排班估算。
+          通知注册、同步和延长操作需联网；联网后请手动同步离线修改。
+        </Alert>}
+
+        {scheduleStorageWarning && <Alert severity="warning" sx={{ mt: 2 }}>{scheduleStorageWarning}</Alert>}
+
+        {hasOfflineChanges && auth.deviceToken && <Alert severity="warning" sx={{ mt: 2 }} data-testid="offline-unsynced">
+          离线修改已保存在本机，尚未同步到服务端。联网后请到设置点击“同步通知配置”；服务器仍按上次同步的配置提醒。
+        </Alert>}
+
         {cloudDisabled && auth.deviceToken && (
           <Alert
             severity="warning"
             sx={{ mt: 2 }}
             action={
-              <Button color="inherit" size="small" onClick={onReEnable}>
+              <Button color="inherit" size="small" onClick={onReEnable} disabled={!isOnline}>
                 重新开启
               </Button>
             }
@@ -769,7 +848,7 @@ function App() {
             <CardContent>
               <Typography variant="h6">本周节奏</Typography>
               <Typography variant="body2" color="text.secondary">
-                模式：{notificationOnline ? '通知已连接（本地也保留副本）' : '本地模式（未开启通知）'}
+                模式：{notificationOnline ? (isOnline ? '通知已注册（本地也保留副本）' : '离线浏览（已保存通知配置）') : '本地模式（未开启通知）'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 当前时区：{timezone} · 规则：{scheduleRuleName(scheduleRule)}
@@ -937,6 +1016,8 @@ function App() {
                     <Alert severity="info">
                       当前未开启通知。应用将仅使用本地配置运行（日历/倒计时可用），不会写入服务端。
                     </Alert>
+                  ) : !isOnline ? (
+                    <Alert severity="info">通知配置已保存在本地。当前离线，无法验证服务端状态或接收新的网络推送；离线修改不会自动提交。</Alert>
                   ) : notificationEnabled ? (
                     <Alert severity="success">通知已开启，服务端将按当前配置推送；本地会同步保留一份配置。</Alert>
                   ) : (
@@ -1001,15 +1082,15 @@ function App() {
 
                   <Stack direction={isWide ? 'row' : 'column'} spacing={1}>
                     {needsTurnstile ? (
-                      <Button disabled={busy || !turnstileToken} variant="contained" onClick={onRegister}>
+                      <Button disabled={busy || !isOnline || !turnstileToken} variant="contained" onClick={onRegister}>
                         开启通知
                       </Button>
                     ) : (
                       <>
-                        <Button disabled={busy || !auth.deviceToken} variant="outlined" onClick={onUpdate}>
+                        <Button disabled={busy || !isOnline || !auth.deviceToken} variant="outlined" onClick={onUpdate}>
                           同步通知配置
                         </Button>
-                        <Button disabled={busy || !auth.deviceToken} color="error" variant="text" onClick={onUnregister}>
+                        <Button disabled={busy || !isOnline || !auth.deviceToken} color="error" variant="text" onClick={onUnregister}>
                           关闭通知
                         </Button>
                       </>
@@ -1107,6 +1188,11 @@ function App() {
                     ))}
                     <Typography variant="caption" color="text.secondary">第三方整理的官方放假安排；每30分钟检查更新，超过48小时未成功同步标为旧数据。请以最新官方安排为准。</Typography>
                   </Box>}
+                  {holidays.cacheWarning && <Alert severity="warning" data-testid="holiday-cache-warning">{holidays.cacheWarning}</Alert>}
+                  <Typography variant="caption" color="text.secondary">
+                    联网访问并完成缓存后，可离线打开日历与倒计时。假期长期保留在本机，页面打开时定期更新；关闭应用后不保证定时刷新。
+                    浏览器可能清理缓存，首次离线访问无法下载未缓存的内容。应用更新会在旧页面全部关闭后启用，不强制重载当前设置。
+                  </Typography>
                   {holidays.catalogUnavailable && <Alert severity="warning">暂时无法获取可用节假日地区，请稍后刷新重试。未加载的节假日按排班规则估算。</Alert>}
 
                   {scheduleRule === 'big_small' && (
@@ -1335,10 +1421,10 @@ function App() {
                   </Stack>
 
                   <Stack direction={isWide ? 'row' : 'column'} spacing={1}>
-                    <Button variant="contained" onClick={onCreateExtension}>
+                    <Button variant="contained" onClick={onCreateExtension} disabled={!isOnline || busy}>
                       新增延长区间
                     </Button>
-                    <Button variant="outlined" onClick={onLoadExtensions}>
+                    <Button variant="outlined" onClick={onLoadExtensions} disabled={!isOnline || busy}>
                       刷新列表
                     </Button>
                   </Stack>
@@ -1355,7 +1441,7 @@ function App() {
                               状态: {item.status === 1 ? '生效中' : '已停用'}
                             </Typography>
                           </Box>
-                          <Button color="error" onClick={() => onDeleteExtension(item.id)}>
+                          <Button color="error" onClick={() => onDeleteExtension(item.id)} disabled={!isOnline || busy}>
                             删除
                           </Button>
                         </CardContent>
