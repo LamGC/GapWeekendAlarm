@@ -6,6 +6,8 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
+  // Stop on the first reproducible failure; a green run still executes every case.
+  maxFailures: process.env.CI ? 1 : undefined,
   reporter: [['list']],
   use: { baseURL: 'http://127.0.0.1:4175', serviceWorkers: 'allow', trace: 'retain-on-failure' },
   projects: [
