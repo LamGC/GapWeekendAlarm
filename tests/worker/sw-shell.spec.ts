@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 type Listener = (event: Record<string, unknown>) => void;
-function worker(failPath = '', urls = ['/index.html', '/assets/app-hash.js'], fetchSlots = Infinity) {
+function worker(failPath = '', urls = ['/', '/assets/app-hash.js'], fetchSlots = Infinity) {
   const listeners = new Map<string, Listener>();
   const stores = new Map<string, Map<string, unknown>>();
   const fetched: string[] = [];
@@ -43,6 +43,9 @@ function worker(failPath = '', urls = ['/index.html', '/assets/app-hash.js'], fe
     },
     fetch: async (request: Request) => {
       await acquireFetchSlot();
+      expect(request.redirect).toBe('error');
+      expect(request.credentials).toBe('omit');
+      expect(request.cache).toBe('reload');
       fetched.push(request.url);
       let bodyConsumed = false;
       return {
@@ -113,7 +116,7 @@ test('only installed public assets and SPA navigation are intercepted', async ()
 
 
 test('install drains bodies before awaiting all headers under a three-fetch limit', async () => {
-  const urls = ['/assets/app-hash.css', '/assets/app-hash.js', '/icon-192.svg', '/icon-512.svg', '/index.html', '/manifest.webmanifest'];
+  const urls = ['/assets/app-hash.css', '/assets/app-hash.js', '/icon-192.svg', '/icon-512.svg', '/', '/manifest.webmanifest'];
   const sw = worker('', urls, 3);
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {

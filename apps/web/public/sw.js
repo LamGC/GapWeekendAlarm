@@ -73,7 +73,7 @@ async function installShell() {
   try {
     // Fetch every asset before writing. Never leave a partially installed shell behind.
     const entries = await Promise.all(PRECACHE.urls.map(async (path) => {
-      const request = new Request(new URL(path, self.location.origin), { cache: 'reload', credentials: 'omit' });
+      const request = new Request(new URL(path, self.location.origin), { cache: 'reload', credentials: 'omit', redirect: 'error' });
       const response = await fetch(request);
       if (response.status !== 200 || response.type !== 'basic' || response.redirected) {
         throw new Error(`precache_failed:${path}`);
@@ -108,7 +108,7 @@ self.addEventListener('fetch', (event) => {
   // Navigation query strings are deliberately not used as cache keys.
   if (event.request.mode === 'navigate') {
     event.respondWith(caches.open(SHELL_CACHE).then(async (cache) =>
-      (await cache.match('/index.html')) ?? fetch(event.request)));
+      (await cache.match('/')) ?? fetch(event.request)));
   } else if (!url.search && SHELL_PATHS.has(url.pathname)) {
     event.respondWith(caches.open(SHELL_CACHE).then(async (cache) =>
       (await cache.match(url.pathname)) ?? fetch(event.request)));

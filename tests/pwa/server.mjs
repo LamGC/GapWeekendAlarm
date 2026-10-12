@@ -5,6 +5,8 @@ import { resolve, extname } from 'node:path';
 const root = resolve('apps/web/dist');
 let revision = '';
 let broken = false;
+let redirectAsset = false;
+let redirectTargetHits = 0;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1:4175');
@@ -12,7 +14,15 @@ createServer(async (req, res) => {
   if (url.pathname === '/__test/update' && req.method === 'POST') {
     revision = url.searchParams.get('revision') ?? '';
     broken = url.searchParams.get('broken') === '1';
+    redirectAsset = url.searchParams.get('redirect') === '1';
+    redirectTargetHits = 0;
     res.end('ok'); return;
+  }
+  // Match Cloudflare Pages canonical HTML handling, not a permissive static server.
+  if (url.pathname === '/index.html') { res.writeHead(308, { Location: '/' }); res.end(); return; }
+  if (url.pathname === '/__test/redirect-hits') { res.end(String(redirectTargetHits)); return; }
+  if (url.pathname === '/assets/redirect-test.js') {
+    res.writeHead(308, { Location: 'http://127.0.0.1:4176/unsafe-redirect-target' }); res.end(); return;
   }
   if (/^\/(api|auth|subscriptions|cdn-cgi)(\/|$)/.test(url.pathname)) {
     res.setHeader('Content-Type', 'application/json');
@@ -39,7 +49,7 @@ createServer(async (req, res) => {
     let data = await readFile(file === root ? resolve(root, 'index.html') : file);
     if (url.pathname === '/sw.js' && revision) {
       data = Buffer.from(data.toString().replace(/"version":"[^"]+"/, `"version":"test-${revision}"`)
-        .replace('"urls":[', broken ? '"urls":["/assets/missing-test.js",' : '"urls":['));
+        .replace('"urls":[', broken ? '"urls":["/assets/missing-test.js",' : redirectAsset ? '"urls":["/assets/redirect-test.js",' : '"urls":['));
     }
     res.setHeader('Content-Type', types[extname(file)] ?? (file === root ? 'text/html' : 'application/octet-stream'));
     res.end(data);
@@ -50,6 +60,7 @@ createServer(async (req, res) => {
   }
 }).listen(4175, '127.0.0.1');
 createServer((req, res) => {
+  if (req.url === '/unsafe-redirect-target') redirectTargetHits += 1;
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
   res.end('{"probe":"cross-origin"}');

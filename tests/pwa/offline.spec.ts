@@ -22,7 +22,10 @@ test.beforeEach(async ({ request, page, context }) => {
   await request.post('/__test/update');
 });
 
-test('production shell reloads and opens unknown SPA routes offline', async ({ page, context }) => {
+test('production shell reloads and opens unknown SPA routes offline', async ({ page, context, request }) => {
+  const redirect = await request.get('/index.html', { maxRedirects: 0 });
+  expect(redirect.status()).toBe(308);
+  expect(redirect.headers().location).toBe('/');
   await page.addInitScript(() => {
     if (!localStorage.getItem('gwa:schedule')) localStorage.setItem('gwa:schedule', JSON.stringify({ enabledHolidaySources: ['CN_MAINLAND'] }));
   });
@@ -31,7 +34,8 @@ test('production shell reloads and opens unknown SPA routes offline', async ({ p
   const names = await shellNames(page);
   expect(names).toHaveLength(1);
   const urls = await page.evaluate(async (name) => (await (await caches.open(name)).keys()).map((r) => new URL(r.url).pathname), names[0]);
-  expect(urls).toEqual(expect.arrayContaining(['/index.html', '/manifest.webmanifest', '/icon-192.svg', '/icon-512.svg']));
+  expect(urls).toEqual(expect.arrayContaining(['/', '/manifest.webmanifest', '/icon-192.svg', '/icon-512.svg']));
+  expect(urls).not.toContain('/index.html');
   expect(urls.some((url) => /\/assets\/.+\.js$/.test(url))).toBe(true);
   expect(urls.some((url) => /\/assets\/.+\.css$/.test(url))).toBe(true);
   await context.setOffline(true);
@@ -232,4 +236,27 @@ test('failed sync protects local edits even when the browser still reports onlin
   await page.reload();
   await expect(page.getByTestId('offline-unsynced')).toBeVisible();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gwa:schedule')!).anchorWeekType)).toBe(edited);
+});
+
+test('redirected precache update never follows a cross-origin target and preserves the old shell', async ({ page, context, request }) => {
+  await controlled(page);
+  const previous = await shellNames(page);
+  await request.post('/__test/update?revision=redirected&redirect=1');
+  await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.update();
+    const worker = registration.installing;
+    if (worker && worker.state !== 'redundant') {
+      await new Promise<void>((resolve) => worker.addEventListener('statechange', () => {
+        if (worker.state === 'redundant') resolve();
+      }));
+    }
+  });
+  expect(await (await request.get('/__test/redirect-hits')).text()).toBe('0');
+  expect(await page.evaluate(async () => Boolean((await navigator.serviceWorker.getRegistration())?.waiting))).toBe(false);
+  expect(await shellNames(page)).toEqual(previous);
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator('#root')).not.toBeEmpty();
+  await expect(page.getByTestId('offline-status')).toBeVisible();
 });
