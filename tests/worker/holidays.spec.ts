@@ -178,3 +178,30 @@ test('first cron bootstraps snapshots once, failed attempts wait for daily retry
     expect(calls).toBe(3);
   } finally { globalThis.fetch = fetch; db.sqlite.close(); }
 });
+
+test('newer document wins conflicting dates and contributing stale data is exposed', () => {
+  const current = { ...document, days: [{ date: '2026-12-31', name: '原安排', isOffDay: false }] };
+  const next = { year: 2027, papers: document.papers, days: [{ date: '2026-12-31', name: '元旦', isOffDay: true }] };
+  const rows = [snapshot(2027, next, { last_error: 'upstream_http_503' }), snapshot(2026, current)];
+  const calendar = calendarFromSnapshots(2026, rows, now);
+  expect(calendar.days).toEqual(next.days);
+  expect(calendar.status).toBe('stale');
+  expect(calendarFromSnapshots(2026, [snapshot(2026, current)], now).days).toEqual(current.days);
+});
+
+test('migration 0003 is repeatable and retains subscriptions, legacy data and snapshots', () => {
+  const db = database();
+  db.sqlite.prepare(`INSERT INTO subscriptions (id,client_id,device_token,endpoint,p256dh,auth,timezone,schedule_rule,registered_at)
+    VALUES ('kept','kept-client','kept-token','https://push.test','key','auth','Asia/Shanghai',2,'2026-01-01')`).run();
+  db.sqlite.prepare(`INSERT INTO holiday_adjustments (id,date,type,region,note) VALUES ('legacy','2026-10-01',1,'CN','国庆节')`).run();
+  db.sqlite.prepare(`INSERT INTO holiday_year_snapshots (source_code,year,payload,synced_at,attempted_at) VALUES ('CN_MAINLAND',2026,?,?,?)`)
+    .run(JSON.stringify(document), new Date().toISOString(), new Date().toISOString());
+  const migration = readFileSync('apps/worker/migrations/0003_holiday_snapshots.sql', 'utf8');
+  db.sqlite.exec(migration);
+  db.sqlite.exec(migration);
+  expect(db.sqlite.prepare('SELECT COUNT(*) AS count FROM subscriptions').get()?.count).toBe(1);
+  expect(db.sqlite.prepare('SELECT COUNT(*) AS count FROM holiday_adjustments').get()?.count).toBe(1);
+  expect(db.sqlite.prepare('SELECT payload FROM holiday_year_snapshots').get()?.payload).toBe(JSON.stringify(document));
+  expect(db.sqlite.prepare("SELECT enabled FROM holiday_data_sources WHERE source_code = 'CN_HK'").get()?.enabled).toBe(0);
+  db.sqlite.close();
+});

@@ -242,4 +242,4 @@ npm run test:e2e:joint   # Web + Worker 联合集成测试（Playwright）
 没有在此功能开发中执行任何生产迁移或发布。
 
 新增 `npm run test:worker`：Node 22+ 下运行内存 SQLite 的迁移、年度 API、同步和提醒策略测试，不依赖浏览器或 Cloudflare 账号。
-GitHub 测试工作流运行该测试、两端检查/打包和现有 Web / 联合 Playwright 测试；不部署、不读取 Cloudflare secrets。
+GitHub 可复用测试工作流运行该测试、两端检查/打包和现有 Web / 联合 Playwright 测试；不部署、不读取 Cloudflare secrets。Cloudflare 发布工作流直接依赖同一次测试成功，避免生产发布先于独立测试完成。

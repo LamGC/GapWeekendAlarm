@@ -1,10 +1,7 @@
 name: Holiday and application tests
 
 on:
-  push:
-    branches: ['**']
-  pull_request:
-    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
