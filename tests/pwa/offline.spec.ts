@@ -2,12 +2,12 @@ import { expect, test, type Page } from '@playwright/test';
 
 async function controlled(page: Page) {
   await page.goto('/');
-  await page.evaluate(async () => {
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) {
-      await new Promise<void>((resolve) => navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true }));
-    }
-  });
+  await expect.poll(() => page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    return registration?.active?.state ?? registration?.installing?.state ?? 'unregistered';
+  }), { message: 'Production service worker must finish installing', timeout: 10_000 }).toBe('activated');
+  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+    { message: 'Production shell must be controlled', timeout: 10_000 }).toBe(true);
   await expect(page.locator('#root')).not.toBeEmpty();
 }
 
@@ -15,7 +15,9 @@ async function shellNames(page: Page) {
   return page.evaluate(async () => (await caches.keys()).filter((name) => name.startsWith('gwa-shell-v1-')));
 }
 
-test.beforeEach(async ({ request }) => {
+test.beforeEach(async ({ request, page }) => {
+  page.on('pageerror', (error) => console.error('PWA page error:', error.message));
+  page.on('console', (message) => { if (message.type() === 'warning' || message.type() === 'error') console.log('PWA browser:', message.text()); });
   await request.post('/__test/update');
 });
 
@@ -188,15 +190,20 @@ test('failed first install cannot leave notification registration busy forever',
     if (request.method() === 'POST' && request.url().includes('/api/v1/subscriptions')) subscriptionPosts += 1;
   });
   await page.addInitScript(() => {
-    Object.defineProperty(navigator.serviceWorker, 'ready', { get: () => new Promise(() => {}) });
+    Object.defineProperty(navigator.serviceWorker, 'ready', { get: () => {
+      document.documentElement.dataset.readyReads = String(Number(document.documentElement.dataset.readyReads ?? 0) + 1);
+      return new Promise(() => {});
+    } });
   });
   await page.goto('/');
   await page.getByRole('tab', { name: '设置', exact: true }).click();
   const button = page.getByRole('button', { name: '开启通知', exact: true });
   await expect(button).toBeEnabled();
   const before = await page.evaluate(() => localStorage.getItem('gwa:schedule'));
+  const readyReads = await page.evaluate(() => Number(document.documentElement.dataset.readyReads ?? 0));
   await button.click();
   await expect(button).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => Number(document.documentElement.dataset.readyReads ?? 0))).toBeGreaterThan(readyReads);
   await page.clock.fastForward(16_000);
   await expect(page.getByText(/开启失败: 通知服务暂未就绪/)).toBeVisible();
   await expect(button).toBeEnabled();
