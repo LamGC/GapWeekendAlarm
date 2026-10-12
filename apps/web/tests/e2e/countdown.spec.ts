@@ -1,9 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.removeItem('gwa:countdownUnit');
-  });
+  // Each test gets a fresh browser context; keep saved state intact across reloads.
   await page.route('**/api/v1/**', (route) => route.fulfill({ json: {} }));
   await page.goto('/');
 });

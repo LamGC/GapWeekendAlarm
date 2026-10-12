@@ -4,7 +4,7 @@
 
 ## 触发方式与安全边界
 
-- 每次分支 push、面向 `main` 的 PR，以及手动运行都会检查前后端 lint、Web 构建和 Worker dry-run 打包，不使用 Cloudflare token。
+- 每次分支 push、面向 `main` 的 PR，以及手动运行都会调用同一份可复用测试工作流，检查前后端 lint、Web 构建、Worker dry-run、Worker/SQLite 测试和 Web / 联合 Playwright 测试，不使用 Cloudflare token。发布 job 直接依赖这次测试运行成功，不依赖另一个并行 workflow 的状态。
 - 发布必须同时满足：上述检查通过、当前 ref 为 `refs/heads/main`、事件为 push 或手动运行，以及仓库变量 `CLOUDFLARE_DEPLOY_ENABLED` 为 `true`。
 - PR、feature 分支 push、feature 分支手动运行、tag 均不会执行发布。不要改用 `pull_request_target`。
 - 发布使用 GitHub `production` environment；请先设置环境保护与 secrets，再启用仓库级开关。仅合并本工作流不会在未开启开关时发布。
@@ -44,7 +44,7 @@
 
 ## 发布顺序
 
-1. 无密钥 CI 检查通过。
+1. 无密钥 CI 的检查、构建及全部测试通过。
 2. 等待 `production` 环境审批（如已配置），检查必要变量。
 3. 使用 `npm ci` 和 lockfile 安装依赖；Node 22、Ubuntu 24.04 满足当前 Vite / Wrangler / workerd 运行要求。
 4. 在 `apps/worker` 执行 `wrangler d1 migrations apply DB --remote`。CI 非交互模式自动确认迁移；审核上线时需同时审核 SQL。
@@ -57,7 +57,7 @@ Wrangler 直接使用 `npm ci` 安装的锁定版本，不通过 `npx` 临时下
 ## 故障与恢复
 
 - 缺少配置：发布在修改 Cloudflare 前失败。补齐 GitHub 设置后，从最新 `main` 重跑。
-- lint / 构建失败：先修复代码再发布，不绕过 validate。该工作流不运行浏览器端到端测试，也不保证线上推送链路已验证；仍可按 README 在本地执行 Playwright。
+- lint / 构建失败：先修复代码再发布，不绕过 validate。该工作流运行浏览器端到端测试，但测试使用本地模拟推送，不代表线上推送链路已验证。
 - 迁移失败：Worker 与 Pages 尚未发布；排查对应 SQL。D1 已成功执行的较早迁移不会因后续迁移失败全部撤销。
 - Worker 发布失败：D1 迁移可能已完成；修复后重跑，已记录的迁移不会重复执行。
 - Web 构建或 Pages 上传失败：Worker 可能已上线，旧前端仍在服务。修复后重跑；该流程不是跨服务原子事务，不做自动回滚。

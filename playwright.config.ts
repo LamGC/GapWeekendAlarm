@@ -30,7 +30,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        'bash -lc "cd apps/worker && rm -rf .wrangler/state/v3/d1 && npx wrangler d1 migrations apply gap-weekend-alarm --local --config wrangler.test.toml && npx wrangler dev --local --ip 127.0.0.1 --port 8787 --config wrangler.test.toml"',
+        'bash -lc "cd apps/worker && rm -rf .wrangler/state/v3/d1 && npx wrangler d1 migrations apply gap-weekend-alarm-db --local --config wrangler.test.toml && npx wrangler dev --local --ip 127.0.0.1 --port 8787 --config wrangler.test.toml"',
       url: 'http://127.0.0.1:8787/api/v1/health',
       timeout: 180_000,
       reuseExistingServer: false,

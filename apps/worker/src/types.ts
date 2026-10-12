@@ -33,6 +33,7 @@ export interface HolidayCnDay {
 
 export interface HolidayCnData {
   year: number;
+  papers: string[];
   days: HolidayCnDay[];
 }
 

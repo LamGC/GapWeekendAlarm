@@ -1,0 +1,32 @@
+name: Holiday and application tests
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint:web
+      - run: npm run lint:worker
+      - run: npm run build:web
+      - run: npm run build:worker
+      - run: npm run test:worker
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:web
+      - run: npm run test:e2e:joint

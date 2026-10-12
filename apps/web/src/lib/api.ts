@@ -166,3 +166,23 @@ export async function deleteSubscription(deviceToken: string): Promise<void> {
 export async function fetchConfig(): Promise<{ vapid_public_key: string | null }> {
   return request<{ vapid_public_key: string | null }>('/api/v1/config');
 }
+
+export interface HolidayDay {
+  date: string;
+  name: string;
+  isOffDay: boolean;
+}
+
+export interface HolidayYear {
+  source_code: string;
+  region: string;
+  year: number;
+  status: 'available' | 'stale' | 'unavailable';
+  synced_at: string | null;
+  source_url: string;
+  days: HolidayDay[];
+}
+
+export async function getHolidayYear(source: string, year: number): Promise<HolidayYear> {
+  return request(`/api/v1/holidays?source=${encodeURIComponent(source)}&year=${year}`);
+}

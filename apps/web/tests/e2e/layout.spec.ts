@@ -25,12 +25,12 @@ test('three main tabs are visible', async ({ page }) => {
 
 test('clicking 设置 tab shows settings content', async ({ page }) => {
   await page.getByRole('tab', { name: '设置' }).click();
-  await expect(page.getByText('通知')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '通知', exact: true })).toBeVisible();
 });
 
-test('clicking 延长 tab shows extension content', async ({ page }) => {
+test('clicking 延长 tab shows local-mode extension guidance', async ({ page }) => {
   await page.getByRole('tab', { name: '延长' }).click();
-  await expect(page.getByText('提醒延长')).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: '当前处于本地模式。延长区间仅对服务端通知生效，请先在“通知”板块开启通知。' })).toBeVisible();
 });
 
 test('switching back to 首页 tab shows countdown', async ({ page }) => {

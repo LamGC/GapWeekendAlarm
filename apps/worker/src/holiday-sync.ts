@@ -1,8 +1,4 @@
-import type { HolidayCnData } from './types';
-
-const CDN_BASE = 'https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master';
-const REGION = 'CN';
-const BATCH_SIZE = 50;
+import { HOLIDAY_SOURCE, parseHolidayDocument } from './holidays';
 
 export interface SyncResult {
   year: number;
@@ -11,58 +7,39 @@ export interface SyncResult {
   error?: string;
 }
 
-function log(event: string, data?: Record<string, unknown>): void {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...data }));
-}
-
 export async function syncHolidaysFromCn(db: D1Database, years: number[]): Promise<SyncResult[]> {
-  log('holiday_sync_start', { years });
-  const results = await Promise.all(years.map((year) => syncYear(db, year)));
-  const totalInserted = results.reduce((s, r) => s + r.total, 0);
-  const allOk = results.every((r) => r.ok);
-  log('holiday_sync_done', { years, totalInserted, ok: allOk, results });
-  return results;
+  return Promise.all([...new Set(years)].map((year) => syncYear(db, year)));
 }
 
-async function syncYear(db: D1Database, year: number): Promise<SyncResult> {
-  log('holiday_sync_fetch', { year, url: `${CDN_BASE}/${year}.json` });
-
-  let data: HolidayCnData;
+export async function syncYear(db: D1Database, year: number): Promise<SyncResult> {
+  const attemptedAt = new Date().toISOString();
   try {
-    const res = await fetch(`${CDN_BASE}/${year}.json`);
-    if (!res.ok) {
-      const error = `fetch failed: ${res.status}`;
-      log('holiday_sync_fetch_error', { year, error });
-      return { year, total: 0, ok: false, error };
-    }
-    data = (await res.json()) as HolidayCnData;
+    const response = await fetch(`${HOLIDAY_SOURCE.dataUrl}/${year}.json`, {
+      signal: AbortSignal.timeout(10_000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`upstream_http_${response.status}`);
+    const text = await response.text();
+    if (text.length > 200_000) throw new Error('document_too_large');
+    const data = parseHolidayDocument(JSON.parse(text), year);
+    // One atomic UPSERT replaces the entire year, removing corrected/deleted days.
+    await db.prepare(
+      `INSERT INTO holiday_year_snapshots (source_code, year, payload, synced_at, attempted_at, last_error)
+       VALUES (?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(source_code, year) DO UPDATE SET payload = excluded.payload,
+         synced_at = excluded.synced_at, attempted_at = excluded.attempted_at, last_error = NULL`
+    ).bind(HOLIDAY_SOURCE.code, year, JSON.stringify(data), attemptedAt, attemptedAt).run();
+    return { year, total: data.days.length, ok: true };
   } catch (err) {
-    const error = String(err);
-    log('holiday_sync_fetch_error', { year, error });
+    const error = err instanceof Error ? err.message : 'sync_failed';
+    // Never replace last-good data on network, schema, or unpublished-year failure.
+    await db.prepare(
+      `INSERT INTO holiday_year_snapshots (source_code, year, attempted_at, last_error)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(source_code, year) DO UPDATE SET attempted_at = excluded.attempted_at,
+         last_error = excluded.last_error`
+    ).bind(HOLIDAY_SOURCE.code, year, attemptedAt, error).run();
+    console.warn(JSON.stringify({ event: 'holiday_sync_failed', year, error }));
     return { year, total: 0, ok: false, error };
   }
-
-  const days = data.days ?? [];
-  log('holiday_sync_fetched', { year, days: days.length });
-
-  if (days.length === 0) {
-    return { year, total: 0, ok: true };
-  }
-
-  for (let i = 0; i < days.length; i += BATCH_SIZE) {
-    const batch = days.slice(i, i + BATCH_SIZE);
-    const stmts = batch.map((day) => {
-      const type = day.isOffDay ? 1 : 2;
-      return db
-        .prepare(
-          `INSERT OR REPLACE INTO holiday_adjustments (id, date, type, region, note)
-           VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?)`
-        )
-        .bind(day.date, type, REGION, day.name);
-    });
-    await db.batch(stmts);
-  }
-
-  log('holiday_sync_year_done', { year, total: days.length });
-  return { year, total: days.length, ok: true };
 }

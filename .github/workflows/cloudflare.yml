@@ -16,24 +16,10 @@ env:
 
 jobs:
   validate:
-    name: Validate web and worker
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      - run: npm run lint:web
-      - run: npm run lint:worker
-      - run: npm run build:web
-      - name: Bundle Worker without deploying
-        run: npm run build:worker
+    name: Validate application and tests
+    # Keep the deployment gate in this run: another workflow's success is not a dependency.
+    # No secrets are inherited by the reusable build/test workflow.
+    uses: ./.github/workflows/tests.yml
 
   deploy:
     name: Deploy production

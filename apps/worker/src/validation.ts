@@ -27,7 +27,7 @@ export const createSubscriptionSchema = z.object({
       anchor_week_type: weekTypeSchema,
     })
     .optional(),
-  enabled_holiday_sources: z.array(z.string()).max(8).optional().default([]),
+  enabled_holiday_sources: z.array(z.enum(['CN_MAINLAND'])).max(1).optional().default([]),
 });
 
 export const updateSubscriptionSchema = z
@@ -44,7 +44,7 @@ export const updateSubscriptionSchema = z
       .optional(),
     weekend_enabled: z.boolean().optional(),
     workday_enabled: z.boolean().optional(),
-    enabled_holiday_sources: z.array(z.string()).max(8).optional(),
+    enabled_holiday_sources: z.array(z.enum(['CN_MAINLAND'])).max(1).optional(),
   })
   .refine(
     (value) => {
