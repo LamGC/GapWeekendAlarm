@@ -24,7 +24,7 @@ import {
   createTheme,
   useMediaQuery,
 } from '@mui/material';
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type TouchEvent, type UIEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type TouchEvent, type UIEvent } from 'react';
 import {
   createExtension,
   deleteSubscription,
@@ -47,6 +47,8 @@ import {
   saveScheduleConfig,
   saveTemplates,
 } from './lib/localState';
+import { useHolidays } from './lib/useHolidays';
+import type { HolidayDay } from './lib/api';
 import type {
   CalendarDateFormat,
   CalendarWeekStart,
@@ -123,6 +125,8 @@ function App() {
   const [anchorWeekType, setAnchorWeekType] = useState<'big' | 'small'>(initialSchedule.anchorWeekType);
   const [weekendEnabled, setWeekendEnabled] = useState(initialSchedule.weekendEnabled);
   const [workdayEnabled, setWorkdayEnabled] = useState(initialSchedule.workdayEnabled);
+  const [holidaySource, setHolidaySource] = useState(initialSchedule.enabledHolidaySources[0] ?? '');
+  const [calendarYears, setCalendarYears] = useState<number[]>([]);
   const [timezoneMismatch, setTimezoneMismatch] = useState<string | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() =>
     typeof Notification === 'undefined' ? 'default' : Notification.permission
@@ -179,16 +183,22 @@ function App() {
     [activeTimezoneRegion, timezone, timezoneGroups]
   );
 
-  const zonedToday = useMemo(() => getZonedDateISO(timezone), [timezone]);
+  const zonedToday = getZonedDateISO(timezone, new Date(nowMs));
+  const todayYear = Number(zonedToday.slice(0, 4));
+  const holidays = useHolidays(holidaySource, [todayYear, todayYear + 1, ...(prefs.dashboardView === 'calendar' ? calendarYears : [])], nowMs);
+  const onCalendarYears = useCallback((years: number[]) => {
+    setCalendarYears((previous) => previous.join(',') === years.join(',') ? previous : years);
+  }, []);
   const nextRestDate = useMemo(
     () =>
       findNextRestDate({
         startDate: zonedToday,
+        holidayDays: holidays.days,
         scheduleRule,
         anchorDate,
         anchorWeekType,
       }),
-    [anchorDate, anchorWeekType, scheduleRule, zonedToday]
+    [anchorDate, anchorWeekType, scheduleRule, zonedToday, holidays.days]
   );
   const daysToNextRest = useMemo(() => dateDiffDays(zonedToday, nextRestDate), [nextRestDate, zonedToday]);
   const progressWindow = scheduleRule === 'big_small' ? 14 : 7;
@@ -199,8 +209,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (countdownUnit === 'days') return;
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    const id = setInterval(() => setNowMs(Date.now()), countdownUnit === 'days' ? 30_000 : 1000);
     return () => clearInterval(id);
   }, [countdownUnit]);
 
@@ -317,7 +326,7 @@ function App() {
         anchorWeekType: nextAnchorWeekType,
         weekendEnabled,
         workdayEnabled,
-        enabledHolidaySources: [],
+        enabledHolidaySources: holidaySource ? [holidaySource] : [],
       });
       pushMessage(`已切换为本周${weekTypeName(nextCurrentWeekType)}，并同步通知配置`, 'success');
     } catch (err) {
@@ -337,8 +346,9 @@ function App() {
       anchorWeekType,
       weekendEnabled,
       workdayEnabled,
+      enabledHolidaySources: holidaySource ? [holidaySource] : [],
     });
-  }, [anchorDate, anchorWeekType, scheduleRule, timezone, weekendEnabled, weekendTime, workdayEnabled, workdayTime]);
+  }, [holidaySource, anchorDate, anchorWeekType, scheduleRule, timezone, weekendEnabled, weekendTime, workdayEnabled, workdayTime]);
 
   useEffect(() => {
     if (typeof Notification === 'undefined') {
@@ -377,6 +387,7 @@ function App() {
         setScheduleRule(item.schedule_rule);
         setWeekendEnabled(item.weekend_enabled);
         setWorkdayEnabled(item.workday_enabled);
+        setHolidaySource(item.enabled_holiday_sources?.[0] ?? '');
         if (item.week_pattern_anchor) {
           setAnchorDate(item.week_pattern_anchor.anchor_date);
           setAnchorWeekType(item.week_pattern_anchor.anchor_week_type);
@@ -549,7 +560,7 @@ function App() {
         scheduleRule,
         anchorDate,
         anchorWeekType,
-        enabledHolidaySources: [],
+        enabledHolidaySources: holidaySource ? [holidaySource] : [],
       });
 
       const nextAuth = { clientId: newClientId, deviceToken: response.device_token };
@@ -583,7 +594,7 @@ function App() {
         anchorWeekType,
         weekendEnabled,
         workdayEnabled,
-        enabledHolidaySources: [],
+        enabledHolidaySources: holidaySource ? [holidaySource] : [],
       });
       pushMessage('通知配置已同步', 'success');
     } catch (err) {
@@ -766,6 +777,9 @@ function App() {
               <Typography variant="body2" color="text.secondary">
                 周末/调休提醒：{weekendTime} / 工作日提醒：{workdayTime}
               </Typography>
+              <Typography variant="caption" color="text.secondary" data-testid="holiday-coverage" sx={{ display: 'block', mt: 0.5 }}>
+                {holidays.summary}
+              </Typography>
               {currentWeekType && (
                 <Stack direction={isWide ? 'row' : 'column'} spacing={1} sx={{ mt: 0.5 }} alignItems={isWide ? 'center' : 'stretch'}>
                   <Typography variant="body2" sx={{ fontWeight: 600 }} color="primary.main">
@@ -901,6 +915,10 @@ function App() {
                   anchorWeekType={anchorWeekType}
                   weekStart={prefs.calendarWeekStart}
                   dateFormat={prefs.calendarDateFormat}
+                  holidayDays={holidays.days}
+                  holidaySource={holidaySource}
+                  yearStatus={holidays.yearStatus}
+                  onVisibleYears={onCalendarYears}
                 />
               </CardContent>
             </Card>
@@ -1059,6 +1077,37 @@ function App() {
                       <MenuItem value="single_rest">单休</MenuItem>
                     </Select>
                   </FormControl>
+
+                  <FormControl fullWidth>
+                    <InputLabel id="holiday-source-label">节假日地区</InputLabel>
+                    <Select labelId="holiday-source-label" value={holidaySource} label="节假日地区"
+                      onChange={(e) => setHolidaySource(e.target.value)}>
+                      <MenuItem value="">关闭（仅按排班）</MenuItem>
+                      {holidays.sources.map((source) => (
+                        <MenuItem key={source.source_code} value={source.source_code}>{source.source_name || '中国内地'}</MenuItem>
+                      ))}
+                      {holidaySource && !holidays.sources.some((source) => source.source_code === holidaySource) && (
+                        <MenuItem value={holidaySource}>当前来源不可用（{holidaySource}）</MenuItem>
+                      )}
+                    </Select>
+                  </FormControl>
+                  <Typography variant="body2" color="text.secondary">
+                    节假日休息与调休上班优先于排班规则，不改变大小周锚点。地区与时区分别设置；默认关闭。
+                    {auth.deviceToken ? '本地立即生效；请点击“同步通知配置”更新服务端提醒。' : '本地立即生效，开启通知时会一并同步。'}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">{holidays.summary}</Typography>
+                  {holidaySource && <Box>
+                    {holidays.metadata.map((item) => (
+                      <Typography key={item.year} variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        {item.year}年 · 最近成功同步：{item.syncedAt && Number.isFinite(Date.parse(item.syncedAt))
+                          ? new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.syncedAt)) + `（${timezone}）`
+                          : '暂无'}
+                        {item.sourceUrl && <> · <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer">数据来源：holiday-cn</a></>}
+                      </Typography>
+                    ))}
+                    <Typography variant="caption" color="text.secondary">第三方整理的官方放假安排；每30分钟检查更新，超过48小时未成功同步标为旧数据。请以最新官方安排为准。</Typography>
+                  </Box>}
+                  {holidays.catalogUnavailable && <Alert severity="warning">暂时无法获取可用节假日地区，请稍后刷新重试。未加载的节假日按排班规则估算。</Alert>}
 
                   {scheduleRule === 'big_small' && (
                     <Stack direction={isWide ? 'row' : 'column'} spacing={2}>
@@ -1404,6 +1453,10 @@ function CalendarView({
   anchorWeekType,
   weekStart,
   dateFormat,
+  holidayDays,
+  holidaySource,
+  yearStatus,
+  onVisibleYears,
 }: {
   monthDate: string;
   todayDate: string;
@@ -1413,6 +1466,10 @@ function CalendarView({
   anchorWeekType: 'big' | 'small';
   weekStart: CalendarWeekStart;
   dateFormat: CalendarDateFormat;
+  holidayDays: Record<string, HolidayDay>;
+  holidaySource: string;
+  yearStatus: (year: number) => string;
+  onVisibleYears: (years: number[]) => void;
 }) {
   const ITEM_HEIGHT = 52;
   const isCompact = useMediaQuery('(max-width:600px)');
@@ -1463,6 +1520,13 @@ function CalendarView({
   const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 1);
   const endIndex = Math.min(TOTAL_ROWS, startIndex + visibleCount);
   const visibleIndices = Array.from({ length: endIndex - startIndex }, (_, idx) => startIndex + idx);
+  const visibleStart = addDaysISO(baseWeekStart, (windowStartOffset + startIndex) * 7);
+  const visibleEnd = addDaysISO(baseWeekStart, (windowStartOffset + endIndex) * 7 - 1);
+  const firstYear = Number(visibleStart.slice(0, 4));
+  const lastYear = Number(visibleEnd.slice(0, 4));
+  useEffect(() => {
+    onVisibleYears(Array.from({ length: lastYear - firstYear + 1 }, (_, index) => firstYear + index));
+  }, [firstYear, lastYear, onVisibleYears]);
   const activeIndex = Math.max(
     0,
     Math.min(TOTAL_ROWS - 1, Math.floor((scrollTop + VIEWPORT_HEIGHT / 2) / ITEM_HEIGHT))
@@ -1572,12 +1636,16 @@ function CalendarView({
                   }}
                 >
                   {weekDates.map((date) => {
-                    const isRest = isRestDayByRule({
+                    const holiday = holidayDays[date];
+                    const isRest = holiday?.isOffDay ?? isRestDayByRule({
                       scheduleRule,
                       anchorDate,
                       anchorWeekType,
                       date,
                     });
+                    const reason = holiday
+                      ? `${holiday.isOffDay ? '休' : '班'} · ${holiday.name}（${yearStatus(Number(date.slice(0, 4)))}）`
+                      : `${isRest ? '休息日' : '工作日'} · 排班规则${holidaySource ? `（${yearStatus(Number(date.slice(0, 4)))}）` : ''}`;
                     const isToday = date === todayDate;
                     const isNext = date === nextRestDate;
                     const isCurrentMonth = date.slice(0, 7) === activeMonthKey;
@@ -1585,9 +1653,16 @@ function CalendarView({
                     return (
                       <Box
                         key={date}
+                        role="img"
+                        aria-label={`${date} ${reason}`}
+                        title={`${date} ${reason}`}
+                        data-testid={`calendar-${date}`}
+                        data-rest={isRest}
                         sx={{
                           height: 40,
-                          borderRadius: 999,
+                          borderRadius: 2,
+                          flexDirection: 'column',
+                          minWidth: 0,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -1604,6 +1679,9 @@ function CalendarView({
                         <Typography variant="body2" fontWeight={isToday || isNext ? 700 : 500}>
                           {Number.parseInt(date.slice(8, 10), 10)}
                         </Typography>
+                        {holiday && <Typography variant="caption" sx={{ fontSize: '0.6rem', lineHeight: 1.1, maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                          {holiday.isOffDay ? '休' : '班'} {holiday.name}
+                        </Typography>}
                       </Box>
                     );
                   })}
@@ -1618,7 +1696,7 @@ function CalendarView({
         日期格式：{dateFormatLabel(dateFormat)} · 下一休息日：{formatDateLabel(nextRestDate, dateFormat)}
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-        高亮说明：橙色=下一休息日，灰底=休息日，青色边框=今天，非本月日期已暗化
+        高亮说明：橙色=下一休息日，灰底=休息日，青色边框=今天，非本月日期已暗化；休/班=节假日/调休安排
       </Typography>
     </Box>
   );
@@ -1738,6 +1816,7 @@ function getZonedDateISO(timeZone: string, now = new Date()): string {
 
 function findNextRestDate(params: {
   startDate: string;
+  holidayDays: Record<string, HolidayDay>;
   scheduleRule: ScheduleRule;
   anchorDate: string;
   anchorWeekType: 'big' | 'small';
@@ -1745,7 +1824,7 @@ function findNextRestDate(params: {
   for (let i = 0; i <= 370; i += 1) {
     const date = addDaysISO(params.startDate, i);
     if (
-      isRestDayByRule({
+      params.holidayDays[date]?.isOffDay ?? isRestDayByRule({
         scheduleRule: params.scheduleRule,
         anchorDate: params.anchorDate,
         anchorWeekType: params.anchorWeekType,

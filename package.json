@@ -19,7 +19,8 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report",
     "test:e2e:web": "playwright test --config apps/web/playwright.config.ts",
-    "test:e2e:joint": "playwright test --config playwright.config.ts"
+    "test:e2e:joint": "playwright test --config playwright.config.ts",
+    "test:worker": "playwright test --config playwright.worker.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

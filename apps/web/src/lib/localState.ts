@@ -33,6 +33,7 @@ function getDefaultTimezone(): string {
 function makeDefaultScheduleConfig(): LocalScheduleConfig {
   return {
     timezone: getDefaultTimezone(),
+    enabledHolidaySources: [],
     weekendRemindTime: '17:00',
     workdayRemindTime: '20:00',
     scheduleRule: 'big_small',
@@ -88,6 +89,7 @@ export function loadScheduleConfig(): LocalScheduleConfig {
       ...defaults,
       ...parsed,
       timezone: parsed.timezone || defaults.timezone,
+      enabledHolidaySources: Array.isArray(parsed.enabledHolidaySources) ? parsed.enabledHolidaySources.filter((source): source is string => typeof source === 'string') : [],
       scheduleRule: parsed.scheduleRule || defaults.scheduleRule,
       anchorWeekType: parsed.anchorWeekType || defaults.anchorWeekType,
       weekendEnabled: parsed.weekendEnabled ?? defaults.weekendEnabled,

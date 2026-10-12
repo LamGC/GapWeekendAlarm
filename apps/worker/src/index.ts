@@ -15,6 +15,7 @@ import { daysBetweenInclusive, isValidTimeZone, parseHHMM, zonedNowParts } from 
 import { isRestDay, nextDate, scheduleRuleToInt, weekTypeToInt } from './rules';
 import { sendPush } from './push';
 import { syncHolidaysFromCn } from './holiday-sync';
+import { HOLIDAY_SOURCE, holidayOverride, readHolidayCalendar } from './holidays';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -38,6 +39,21 @@ app.get('/api/v1/holiday-sources', async (c) => {
   return c.json({ sources: rows.results ?? [] });
 });
 
+app.get('/api/v1/holidays', async (c) => {
+  const source = c.req.query('source');
+  const rawYear = c.req.query('year') ?? '';
+  if (source !== HOLIDAY_SOURCE.code || !/^\d{4}$/.test(rawYear) ||
+      Number(rawYear) < 2000 || Number(rawYear) > 2100) {
+    return c.json({ error: 'invalid_holiday_query' }, 400);
+  }
+  const enabled = await c.env.DB.prepare(
+    'SELECT id FROM holiday_data_sources WHERE source_code = ? AND enabled = 1'
+  ).bind(source).first();
+  if (!enabled) return c.json({ error: 'unsupported_holiday_source' }, 400);
+  c.header('Cache-Control', 'public, max-age=300');
+  return c.json(await readHolidayCalendar(c.env.DB, Number(rawYear)));
+});
+
 app.post('/api/v1/subscriptions', async (c) => {
   const parsed = createSubscriptionSchema.safeParse(await readJson(c));
   if (!parsed.success) {
@@ -45,6 +61,9 @@ app.post('/api/v1/subscriptions', async (c) => {
   }
 
   const payload = parsed.data;
+  if (!(await areHolidaySourcesEnabled(c.env.DB, payload.enabled_holiday_sources))) {
+    return c.json({ error: 'unsupported_holiday_source' }, 400);
+  }
   const turnstileOk = await verifyTurnstile(c.env, payload.turnstile_token);
   if (!turnstileOk) {
     return c.json({ error: 'turnstile_failed' }, 403);
@@ -232,6 +251,9 @@ app.put('/api/v1/subscriptions/:deviceToken', async (c) => {
   }
 
   const payload = parsed.data;
+  if (payload.enabled_holiday_sources && !(await areHolidaySourcesEnabled(c.env.DB, payload.enabled_holiday_sources))) {
+    return c.json({ error: 'unsupported_holiday_source' }, 400);
+  }
   if (payload.timezone && !isValidTimeZone(payload.timezone)) {
     return c.json({ error: 'invalid_timezone' }, 400);
   }
@@ -420,7 +442,8 @@ export default {
   scheduled: async (event: ScheduledEvent, env: Env): Promise<void> => {
     if (event.cron === CRON_HOLIDAY_SYNC) {
       const now = new Date();
-      const years = [now.getFullYear(), now.getFullYear() + 1];
+      const year = Number(zonedNowParts('Asia/Shanghai', now).localDate.slice(0, 4));
+      const years = [year - 1, year, year + 1];
       await syncHolidaysFromCn(env.DB, years);
     } else {
       await runScheduler(env);
@@ -428,7 +451,18 @@ export default {
   },
 };
 
+/** Bootstrap on the first minute tick after migration/year rollover, not on public reads.
+ * A failed attempt is persisted so retries stay bounded by the daily sync cron. */
+export async function initializeHolidaySnapshots(db: D1Database): Promise<void> {
+  const year = Number(zonedNowParts('Asia/Shanghai').localDate.slice(0, 4));
+  const attempted = await db.prepare(
+    'SELECT year FROM holiday_year_snapshots WHERE source_code = ? AND year = ?'
+  ).bind(HOLIDAY_SOURCE.code, year).first();
+  if (!attempted) await syncHolidaysFromCn(db, [year - 1, year, year + 1]);
+}
+
 async function runScheduler(env: Env): Promise<void> {
+  await initializeHolidaySnapshots(env.DB);
   await processRetryQueue(env);
 
   const rows = await env.DB.prepare(
@@ -482,9 +516,9 @@ async function processSubscription(env: Env, sub: SubscriptionRow): Promise<void
 
   if (
     sub.workday_enabled === 1 &&
-    now.weekday === 0 &&
     isTimeMatch(now.hour, now.minute, sub.workday_remind_time) &&
-    !isAlreadySent(sentMap, 3, now.localDate)
+    !isAlreadySent(sentMap, 3, now.localDate) &&
+    (await shouldSendWorkdayReminder(env, sub, now.localDate, nextDay, now.weekday))
   ) {
     const suppressed = await isSuppressedByExtension(env.DB, sub.id, 3, now.localDate);
     if (!suppressed) {
@@ -497,28 +531,16 @@ async function processSubscription(env: Env, sub: SubscriptionRow): Promise<void
   }
 }
 
-async function determineTypeForEveningReminder(
+export async function determineTypeForEveningReminder(
   env: Env,
   sub: SubscriptionRow,
   targetDate: string
 ): Promise<1 | 2 | null> {
   const regions = await getEnabledRegions(env.DB, sub.id);
-
-  if (regions.length > 0) {
-    const placeholders = regions.map(() => '?').join(',');
-    const row = await env.DB.prepare(
-      `SELECT type
-         FROM holiday_adjustments
-        WHERE date = ?
-          AND region IN (${placeholders})
-     ORDER BY type DESC
-        LIMIT 1`
-    )
-      .bind(targetDate, ...regions)
-      .first<{ type: number }>();
-
-    if (row?.type === 2) return 2;
-    if (row?.type === 1) return 1;
+  if (regions.includes(HOLIDAY_SOURCE.region)) {
+    const calendar = await readHolidayCalendar(env.DB, Number(targetDate.slice(0, 4)));
+    const day = holidayOverride(calendar, targetDate);
+    if (day) return day.isOffDay ? 1 : 2;
   }
 
   const rest = isRestDay({
@@ -529,6 +551,33 @@ async function determineTypeForEveningReminder(
   });
 
   return rest ? 1 : null;
+}
+
+export async function shouldSendWorkdayReminder(
+  env: Env, sub: SubscriptionRow, today: string, tomorrow: string, weekday: number
+): Promise<boolean> {
+  const regions = await getEnabledRegions(env.DB, sub.id);
+  if (!regions.includes(HOLIDAY_SOURCE.region)) return weekday === 0;
+  const tomorrowCalendar = await readHolidayCalendar(env.DB, Number(tomorrow.slice(0, 4)));
+  const todayCalendar = today.slice(0, 4) === tomorrow.slice(0, 4)
+    ? tomorrowCalendar : await readHolidayCalendar(env.DB, Number(today.slice(0, 4)));
+  const baseRest = (date: string) => isRestDay({
+    scheduleRule: sub.schedule_rule, anchorDate: sub.anchor_date,
+    anchorWeekType: sub.anchor_week_type, date,
+  });
+  const target = holidayOverride(tomorrowCalendar, tomorrow);
+  const current = holidayOverride(todayCalendar, today);
+  const tomorrowRest = target?.isOffDay ?? baseRest(tomorrow);
+  const todayRest = current?.isOffDay ?? baseRest(today);
+  return !tomorrowRest && (todayRest || target?.isOffDay === false);
+}
+
+async function areHolidaySourcesEnabled(db: D1Database, sources: string[]): Promise<boolean> {
+  if (!sources.length) return true;
+  const row = await db.prepare(
+    'SELECT id FROM holiday_data_sources WHERE source_code = ? AND enabled = 1'
+  ).bind(sources[0]).first();
+  return Boolean(row);
 }
 
 async function sendType(env: Env, sub: SubscriptionRow, type: 1 | 2 | 3): Promise<boolean> {

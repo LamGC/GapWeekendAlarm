@@ -15,6 +15,7 @@ export interface LocalPreferences {
 
 export interface LocalScheduleConfig {
   timezone: string;
+  enabledHolidaySources: string[];
   weekendRemindTime: string;
   workdayRemindTime: string;
   scheduleRule: ScheduleRule;
