@@ -146,3 +146,60 @@ test('blocked local storage keeps the shell usable and explains session-only set
   await page.getByRole('tab', { name: '设置', exact: true }).click();
   await expect(page.getByTestId('holiday-cache-warning')).toContainText('缓存空间不足或存储不可用');
 });
+
+test('foreground timer and reconnect revalidate cached holidays without losing last-good data', async ({ page, context }) => {
+  let requests = 0;
+  let name = '首次缓存';
+  await page.addInitScript(() => {
+    localStorage.setItem('gwa:schedule', JSON.stringify({ enabledHolidaySources: ['CN_MAINLAND'] }));
+  });
+  await page.route('**/api/v1/holidays?*', async (route) => {
+    requests += 1;
+    const year = Number(new URL(route.request().url()).searchParams.get('year'));
+    await route.fulfill({ json: { source_code: 'CN_MAINLAND', region: 'CN', year,
+      status: 'available', synced_at: new Date().toISOString(), source_url: 'https://github.com/NateScarlet/holiday-cn',
+      days: [{ date: `${year}-01-01`, name, isOffDay: true }] } });
+  });
+  await controlled(page);
+  await expect(page.getByTestId('holiday-coverage')).toContainText('已覆盖');
+  const cachedText = () => page.evaluate(() => Object.entries(localStorage)
+    .filter(([key]) => key.startsWith('gap-weekend:holidays:')).map(([, value]) => value).join(''));
+  await expect.poll(cachedText).toContain('首次缓存');
+  const initialRequests = requests;
+  await page.clock.install();
+  name = '定时刷新';
+  await page.clock.fastForward(30 * 60 * 1000);
+  await expect.poll(() => requests).toBeGreaterThan(initialRequests);
+  await expect.poll(cachedText).toContain('定时刷新');
+  await context.setOffline(true);
+  await expect(page.getByTestId('holiday-coverage')).toContainText('离线缓存');
+  expect(await cachedText()).toContain('定时刷新');
+  name = '联网刷新';
+  await context.setOffline(false);
+  await expect.poll(cachedText).toContain('联网刷新');
+  await expect(page.getByTestId('holiday-coverage')).toContainText('已覆盖');
+});
+
+test('failed first install cannot leave notification registration busy forever', async ({ page, context }) => {
+  await context.grantPermissions(['notifications']);
+  let subscriptionPosts = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/v1/subscriptions')) subscriptionPosts += 1;
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.serviceWorker, 'ready', { get: () => new Promise(() => {}) });
+  });
+  await page.goto('/');
+  await page.getByRole('tab', { name: '设置', exact: true }).click();
+  const button = page.getByRole('button', { name: '开启通知', exact: true });
+  await expect(button).toBeEnabled();
+  const before = await page.evaluate(() => localStorage.getItem('gwa:schedule'));
+  await page.clock.install();
+  await button.click();
+  await expect(button).toBeDisabled();
+  await page.clock.fastForward(16_000);
+  await expect(page.getByText(/开启失败: 通知服务暂未就绪/)).toBeVisible();
+  await expect(button).toBeEnabled();
+  expect(subscriptionPosts).toBe(0);
+  expect(await page.evaluate(() => localStorage.getItem('gwa:schedule'))).toBe(before);
+});

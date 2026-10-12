@@ -50,6 +50,7 @@ import {
   writeLocalValue,
 } from './lib/localState';
 import { useHolidays } from './lib/useHolidays';
+import { removeLocalPushSubscription, waitForServiceWorker } from './lib/serviceWorkerReady';
 import type { HolidayDay } from './lib/api';
 import type {
   CalendarDateFormat,
@@ -580,7 +581,7 @@ function App() {
         throw new Error('notification_permission_denied');
       }
 
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await waitForServiceWorker(navigator.serviceWorker);
       const { vapid_public_key } = await fetchConfig();
       if (!vapid_public_key) throw new Error('vapid_key_unavailable');
       const browserSub =
@@ -664,17 +665,16 @@ function App() {
     setBusy(true);
     try {
       await deleteSubscription(auth.deviceToken);
-      const registration = await navigator.serviceWorker.ready;
-      const sub = await registration.pushManager.getSubscription();
-      if (sub) {
-        await sub.unsubscribe();
-      }
+      // Server deletion succeeded. Always leave local notification mode even when
+      // the browser worker is absent, failed to install, or cannot unsubscribe.
       const nextAuth = { ...auth, deviceToken: '' };
       setAuth(nextAuth);
       saveAuthState(nextAuth);
       setExtensions([]);
       clearOfflineChanges();
-      pushMessage('通知已关闭，已切回本地模式', 'success');
+      const cleaned = await removeLocalPushSubscription(navigator.serviceWorker);
+      pushMessage(cleaned ? '通知已关闭，已切回本地模式'
+        : '服务端通知已关闭，已切回本地模式；浏览器推送订阅未能确认清理，可在浏览器网站设置中关闭通知权限。', cleaned ? 'success' : 'warning');
     } catch (err) {
       pushMessage(`关闭失败: ${(err as Error).message}`, 'error');
     } finally {
@@ -2051,15 +2051,15 @@ interface SwNotificationConfig {
 
 async function syncNotificationConfigToServiceWorker(config: SwNotificationConfig): Promise<void> {
   if (!('serviceWorker' in navigator)) return;
-
-  const registration = await navigator.serviceWorker.ready;
-  const target = registration.active ?? registration.waiting ?? registration.installing;
-  if (!target) return;
-
-  target.postMessage({
-    type: 'SYNC_NOTIFICATION_CONFIG',
-    payload: config,
-  });
+  try {
+    const registration = await waitForServiceWorker(navigator.serviceWorker);
+    const target = registration.active ?? registration.waiting ?? registration.installing;
+    if (!target) return;
+    target.postMessage({ type: 'SYNC_NOTIFICATION_CONFIG', payload: config });
+  } catch {
+    // Best-effort local notification presentation; settings remain saved locally.
+    console.warn('notification_config_sync_unavailable');
+  }
 }
 
 function isLocalDevelopmentHost(hostname: string): boolean {

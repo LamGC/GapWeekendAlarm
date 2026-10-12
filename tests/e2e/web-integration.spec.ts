@@ -75,7 +75,7 @@ test('with valid registered device_token, shows active subscription status', asy
   await page.getByRole('tab', { name: '设置' }).click();
 
   // Expect active subscription notification text
-  await expect(page.getByText(/通知已开启|通知已注册/)).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: /通知已开启|通知已注册/ })).toBeVisible();
 
   // Cleanup
   await request.delete(`${WORKER_URL}/api/v1/subscriptions/${deviceToken}`);
