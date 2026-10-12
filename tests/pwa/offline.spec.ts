@@ -15,7 +15,9 @@ async function shellNames(page: Page) {
   return page.evaluate(async () => (await caches.keys()).filter((name) => name.startsWith('gwa-shell-v1-')));
 }
 
-test.beforeEach(async ({ request, page }) => {
+test.beforeEach(async ({ request, page, context }) => {
+  context.on('console', (message) => console.log('PWA context:', message.text()));
+  context.on('requestfailed', (request) => console.log('PWA failed request:', request.url(), request.failure()?.errorText));
   page.on('pageerror', (error) => console.error('PWA page error:', error.message));
   page.on('console', (message) => { if (message.type() === 'warning' || message.type() === 'error') console.log('PWA browser:', message.text()); });
   await request.post('/__test/update');

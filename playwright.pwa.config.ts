@@ -18,6 +18,8 @@ export default defineConfig({
     command: 'VITE_API_BASE_URL=http://127.0.0.1:4175 npm run build:web && node tests/pwa/server.mjs',
     url: 'http://127.0.0.1:4175',
     reuseExistingServer: false,
+    stdout: 'pipe',
+    stderr: 'pipe',
     timeout: 180_000,
   },
 });
