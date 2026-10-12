@@ -1,0 +1,108 @@
+name: Cloudflare CI and deployment
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  validate:
+    name: Validate web and worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run lint:web
+      - run: npm run lint:worker
+      - run: npm run build:web
+      - name: Bundle Worker without deploying
+        run: npm run build:worker
+
+  deploy:
+    name: Deploy production
+    needs: validate
+    # Repository-level opt-in: merging this workflow alone does not deploy.
+    # Even manual runs from another branch cannot enter this job.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.CLOUDFLARE_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: cloudflare-production
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          # Do not restore dependency caches in the privileged deployment job.
+          package-manager-cache: false
+      - name: Validate production configuration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node <<'NODE'
+          const required = [
+            'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID',
+            'CLOUDFLARE_PAGES_PROJECT', 'VITE_API_BASE_URL',
+            'VITE_TURNSTILE_SITE_KEY',
+          ];
+          for (const key of required) {
+            if (!process.env[key]?.trim()) throw new Error(`Missing production setting: ${key}`);
+          }
+          const api = new URL(process.env.VITE_API_BASE_URL);
+          if (api.protocol !== 'https:' || api.username || api.password ||
+              api.search || api.hash || api.pathname !== '/' ||
+              process.env.VITE_API_BASE_URL.endsWith('/')) {
+            throw new Error('VITE_API_BASE_URL must be an HTTPS origin without a trailing slash');
+          }
+          if (!/^[a-z0-9][a-z0-9-]*$/.test(process.env.CLOUDFLARE_PAGES_PROJECT)) {
+            throw new Error('Invalid CLOUDFLARE_PAGES_PROJECT');
+          }
+          NODE
+      - run: npm ci
+      - name: Apply production D1 migrations
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: ../../node_modules/.bin/wrangler d1 migrations apply DB --remote
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy:worker
+      - name: Build web with production public settings
+        run: npm run build:web
+      - name: Deploy Pages production branch
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: >-
+          ./node_modules/.bin/wrangler pages deploy apps/web/dist
+          --project-name "$CLOUDFLARE_PAGES_PROJECT"
+          --branch main
