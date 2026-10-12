@@ -16,10 +16,9 @@ async function shellNames(page: Page) {
 }
 
 test.beforeEach(async ({ request, page, context }) => {
-  context.on('console', (message) => console.log('PWA context:', message.text()));
+  context.on('console', (message) => { if (message.type() === 'warning' || message.type() === 'error') console.log('PWA browser:', message.text()); });
   context.on('requestfailed', (request) => console.log('PWA failed request:', request.url(), request.failure()?.errorText));
   page.on('pageerror', (error) => console.error('PWA page error:', error.message));
-  page.on('console', (message) => { if (message.type() === 'warning' || message.type() === 'error') console.log('PWA browser:', message.text()); });
   await request.post('/__test/update');
 });
 
@@ -211,4 +210,26 @@ test('failed first install cannot leave notification registration busy forever',
   await expect(button).toBeEnabled();
   expect(subscriptionPosts).toBe(0);
   expect(await page.evaluate(() => localStorage.getItem('gwa:schedule'))).toBe(before);
+});
+
+test('failed sync protects local edits even when the browser still reports online', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('gwa:auth')) localStorage.setItem('gwa:auth', JSON.stringify({ clientId: 'test-client', deviceToken: 'test-only' }));
+  });
+  await controlled(page);
+  await expect(page.getByTestId('holiday-coverage')).toContainText('已覆盖');
+  expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+  const original = await page.evaluate(() => JSON.parse(localStorage.getItem('gwa:schedule')!).anchorWeekType);
+  await page.route('**/api/v1/subscriptions/test-only', async (route) => {
+    if (route.request().method() === 'PUT') await route.abort('failed');
+    else await route.continue();
+  });
+  await page.getByRole('button', { name: /顺序不对/ }).click();
+  await expect(page.getByTestId('offline-unsynced')).toBeVisible();
+  const edited = original === 'big' ? 'small' : 'big';
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('gwa:schedule')!).pendingCloudSync)).toBe(true);
+  await page.unroute('**/api/v1/subscriptions/test-only');
+  await page.reload();
+  await expect(page.getByTestId('offline-unsynced')).toBeVisible();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gwa:schedule')!).anchorWeekType)).toBe(edited);
 });

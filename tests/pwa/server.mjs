@@ -8,8 +8,6 @@ let broken = false;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1:4175');
-  console.log('PWA fixture request', req.method, url.pathname);
-  res.on('finish', () => console.log('PWA fixture response', res.statusCode, url.pathname));
   res.setHeader('Cache-Control', 'no-store');
   if (url.pathname === '/__test/update' && req.method === 'POST') {
     revision = url.searchParams.get('revision') ?? '';
@@ -39,12 +37,6 @@ createServer(async (req, res) => {
   if (!file.startsWith(root + '/') && file !== root) { res.writeHead(403); res.end(); return; }
   try {
     let data = await readFile(file === root ? resolve(root, 'index.html') : file);
-    if (url.pathname === '/sw.js') {
-      data = Buffer.from(data.toString()
-        .replace('const response = await fetch(request);', "console.log('PWA install fetch', path); const response = await fetch(request); console.log('PWA install fetched', path, response.status, response.type);")
-        .replace('const cache = await caches.open(SHELL_CACHE);', "console.log('PWA opening cache'); const cache = await caches.open(SHELL_CACHE); console.log('PWA opened cache');")
-        .replace('cache.put(request, response)', "cache.put(request, response).then(() => console.log('PWA cached', request.url))"));
-    }
     if (url.pathname === '/sw.js' && revision) {
       data = Buffer.from(data.toString().replace(/"version":"[^"]+"/, `"version":"test-${revision}"`)
         .replace('"urls":[', broken ? '"urls":["/assets/missing-test.js",' : '"urls":['));

@@ -78,7 +78,14 @@ async function installShell() {
       if (response.status !== 200 || response.type !== 'basic' || response.redirected) {
         throw new Error(`precache_failed:${path}`);
       }
-      return [request, response];
+      // Drain each body immediately. Chromium limits concurrent install fetches;
+      // waiting for all response headers before consuming bodies can deadlock that queue.
+      const body = await response.arrayBuffer();
+      const buffered = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+      // Fetch has already decoded the body; avoid carrying transport encodings/lengths.
+      buffered.headers.delete('content-encoding');
+      buffered.headers.delete('content-length');
+      return [request, buffered];
     }));
     const cache = await caches.open(SHELL_CACHE);
     await Promise.all(entries.map(([request, response]) => cache.put(request, response)));

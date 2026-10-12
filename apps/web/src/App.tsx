@@ -354,6 +354,8 @@ function App() {
       });
       pushMessage(`已切换为本周${weekTypeName(nextCurrentWeekType)}，并同步通知配置`, 'success');
     } catch (err) {
+      offlineChangesRef.current = true;
+      setHasOfflineChanges(true);
       pushMessage(`已本地切换为本周${weekTypeName(nextCurrentWeekType)}，但同步失败: ${(err as Error).message}`, 'error');
     } finally {
       setBusy(false);
@@ -650,6 +652,8 @@ function App() {
       if (submittedScheduleKey === lastScheduleKeyRef.current) clearOfflineChanges();
       pushMessage('通知配置已同步', 'success');
     } catch (err) {
+      offlineChangesRef.current = true;
+      setHasOfflineChanges(true);
       pushMessage(`同步失败: ${(err as Error).message}`, 'error');
     } finally {
       setBusy(false);
@@ -826,7 +830,7 @@ function App() {
         {scheduleStorageWarning && <Alert severity="warning" sx={{ mt: 2 }}>{scheduleStorageWarning}</Alert>}
 
         {hasOfflineChanges && auth.deviceToken && <Alert severity="warning" sx={{ mt: 2 }} data-testid="offline-unsynced">
-          离线修改已保存在本机，尚未同步到服务端。联网后请到设置点击“同步通知配置”；服务器仍按上次同步的配置提醒。
+          本地修改尚未同步到服务端。网络恢复后请到设置点击“同步通知配置”；服务器仍按上次同步的配置提醒。
         </Alert>}
 
         {cloudDisabled && auth.deviceToken && (
