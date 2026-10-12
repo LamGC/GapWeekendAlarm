@@ -15,7 +15,7 @@ Cloudflare Turnstile      ← 注册时的人机验证
 
 Worker 挂载两条 Cron：
 - `* * * * *` — 每分钟扫描到期推送任务
-- `0 2 * * *` — 每日 UTC 02:00 从 [holiday-cn](https://github.com/NateScarlet/holiday-cn) 同步当年及次年假期数据
+- `0 2 * * *` — 每日 UTC 02:00 从 [holiday-cn](https://github.com/NateScarlet/holiday-cn) 同步上一年、当年及次年假期数据
 
 ---
 

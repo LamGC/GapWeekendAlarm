@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('settings tab shows 通知 section', async ({ page }) => {
-  await expect(page.getByText('通知')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '通知', exact: true })).toBeVisible();
 });
 
 test('shows 当前未开启通知 info alert when no device token', async ({ page }) => {
@@ -15,18 +15,16 @@ test('shows 当前未开启通知 info alert when no device token', async ({ pag
 });
 
 test('schedule rule section is visible', async ({ page }) => {
-  await expect(page.getByText('排班规则')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '排班规则与本地计算', exact: true })).toBeVisible();
 });
 
 test('weekend and workday time fields are visible', async ({ page }) => {
-  // Look for time-related inputs or their labels
-  const timeInputs = page.locator('input[type="time"]');
-  const count = await timeInputs.count();
-  if (count > 0) {
-    await expect(timeInputs.first()).toBeVisible();
-  } else {
-    // Fall back to looking for time-related text labels
-    const timeLabel = page.getByText(/提醒时间|休息日|工作日/);
-    await expect(timeLabel.first()).toBeVisible();
+  for (const label of ['周末/调休提醒时间', '工作日提醒时间']) {
+    const heading = page.getByRole('heading', { name: label, exact: true });
+    await expect(heading).toBeVisible();
+    const timeFields = heading.locator('..').getByRole('combobox');
+    await expect(timeFields).toHaveCount(2);
+    await expect(timeFields.nth(0)).toBeVisible();
+    await expect(timeFields.nth(1)).toBeVisible();
   }
 });
